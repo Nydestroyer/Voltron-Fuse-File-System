@@ -3,19 +3,18 @@ import errno
 import fuse
 import numpy as np
 import sys
-import random
 
 fuse.fuse_python_api = (0, 2)
 
 class VoltronFS(fuse.Fuse):
     def __init__(self, *args, **kw):
         fuse.Fuse.__init__(self, *args, **kw)
+        self.root = '/'
 
     # Nonimportant but still somehow important bits
   
     def getattr(self, path):
-        st = fuse.Stat()
-        return st
+        return os.lstat("." + path)
     
     def unlink(self, path):
         return os.unlink("." + path)
@@ -52,100 +51,37 @@ class VoltronFS(fuse.Fuse):
     def fsync(self, path, isfsyncfile, fh):
         return self.flush(path, fh)
 
-    def readdir(self, path, offset):
-        return os.readdir("." + path, offset)
-
-    # Important Bits
+    #Important Bits
 
     def read(self, path, size, offset):
-        fi = open("." + path, "a")
-        for line in RNG(size):
-            fi.write(line)
+        return 0
 
     def write(self, path, buf, offset):
-        fi = open("." + path, "a")
-        for line in GetStamps(buf):
-            fi.write(line)
+        return 0
                          
-    def RNG(original_numbers):
-        reseed = 10
+    def RNG():
+        return 0
 
-	stamps = GetTimestamps(8 * (original_numbers/reseed))
-	numbers = original_numbers
-    
-	fi = open("stampintermediate.txt", "w")
+    def GetStamps():
+        return 0
 
-	for line in stamps:
-            fi.write(line)
-            fi.flush()
-        fi.close()
-
-	stamps = np.loadtxt("stampintermediate.txt")
-   	 
-	ti = np.diff(stamps)
-	til = ti[1:] > ti[:-1]
-	til = np.array(til)
-	seed = np.packbits(til- 1)
-	randnum = []
-    
-	while(numbers > 0):
-            if numbers % reseed == 0:
-        	random.seed(int(seed[(numbers/reseed)-1]))
-            randnum.append(random.getrandbits(8))
-            if numbers == 0:
-        	return randnum
-            numbers -= 1
-        return randnum
-
-    def GetStamps(stamps):
-        CleanFile()
-        fi = open("ts2.txt", "r")
-
-        lines = fi.readlines()
-
-        fi.close()
-
-        fi = open("ts2.txt", "w")
-
-        count = stamps
-
-        for line in lines:
-            if count == 0:
-                fi.write(line)
-                fi.flush()
-            if count > 0 and count <= starting_count:
-                count -= 1
-        fi.close()
-
-        return lines[0:stamps]
-
-    # Cleans file for future use 
-    def CleanFile():
-        fi = open("ts2.txt","r")
-        lines = fi.readlines()
-        fi.close()
-        fi = open("ts2.txt","w")
-        for line in lines:
-            try: 
-                float(line)
-                fi.write(line)
-                fi.flush()
-            except:
-                pass
-            
-        fi.close()
-        
+    def DumpStamps():
+        return 0
 
     #Having trouble figuring out how the main should work in these things
 def main():
     server = VoltronFS();
-    usage="""
-        Voltron: A filesystem to create random numbers and write them to
-        files by our powers combined.
-        """ + fuse.Fuse.fusage
-    server.parse(errex=1)
-    
-    server.main()
+    #usage="""
+    #    Voltron: A filesystem to create random numbers and write them to
+    #    files by our powers combined.
+    #    """ + fuse.Fuse.fusage
+    #server = VoltronFS(version="%prog " + fuse.__version__,usage=usage,
+    #                   dash_s_do='setsingle')
+    #server.parser.add_option(mountopt="root", metavar="PATH", default='/',
+    #         help="mirror filesystem from under PATH [default: %default]")
+    #server.parse(values=server, errex=1)
+    #
+    #server.main()
     
 if __name__ == '__main__':
     main()
