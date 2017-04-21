@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+#Team Voltron: Andrew Stone, David Eling, John Hutchins, Josh Kiefer
 import stat
 import errno
 import fuse
@@ -7,26 +8,28 @@ import sys
 import random
 import time
 import os
-import io
+import io # Allows for os.open without the use of flags
 from fuse import Fuse
-import tempfile
-import re
+import re # Allows for regexing of file names
 fuse.fuse_python_api = (0, 2)
 
 class VoltronFS(fuse.Fuse):
     def __init__(self, *args, **kw):
         fuse.Fuse.__init__(self, *args, **kw)
-        self.root = '/home/dveling/'
+        self.root = sys.argv[-2]
         self.userfiles = {}
-        self.timestampfiles = {"intermediate":"/home/dveling/intermediate.txt"
-                               ,"timestamps":"/home/dveling/ts2.txt"}
+        self.timestampfiles = {"intermediate":
+                               os.path.join(self.root ,"intermediate.txt")
+                               ,"timestamps":
+                                os.path.join(self.root,"ts2.txt")}
         self.validfilename = re.compile('^[\w,\s-]+\.[A-Za-z]{3}$')
         print self.timestampfiles
         print self.userfiles
-        #self.CleanFile()
-		
-    # Nonimportant but still somehow important bits
-  
+        self.CleanFile()
+
+    #Get the attributes for a file or directory
+    #if the file name is valid (*.***) return its information if it exists
+    #if not create it(with errno.ENOENT)
     def getattr(self, path):
         name = os.path.basename(path)  #Get the real file name from the path
         print "getattr"
@@ -40,7 +43,7 @@ class VoltronFS(fuse.Fuse):
         st.st_ctime = st.st_atime
         if self.validfilename.match(name):
             if name in self.userfiles:
-                st = self.userfiles[name].fgetattr()
+                st = os.stat(self.userfiles[name])
                 pass
             else:
                 return - errno.ENOENT
@@ -74,18 +77,20 @@ class VoltronFS(fuse.Fuse):
     def close(self, path):
         print "close"
 
+    #Return None if the file exists if not return an error
     def open(self, path, flags):
         print "opening"
         name = os.path.basename(path)  #Get the real file name from the path
         if name in self.userfiles:
-            return self.userfiles[name]
+            return None
         else:
             return -errno.ENOENT
-    
+
+    #Add the given file name to the userfile dictionaries
     def create(self, path, mode, fi=None):
         name = os.path.basename(path)  #Get the real file name from the path
         print "creating"
-        self.userfiles[name] = self.VoltronFile(self,path,0,mode) #Create a fake file stream to store the data
+        self.userfiles[name] = os.path.join(self.root, name)
         print self.userfiles
         return self.userfiles[name]
 
@@ -99,23 +104,40 @@ class VoltronFS(fuse.Fuse):
     def fsinit(self):
         os.chdir(self.root)
 
-    def read(self, path, size, offset, fh):
+    #Use the size of the file provided to determine the number
+    #of random bytes to write to the file
+    def read(self, path, size, offset, fh=None):
         print "reading"
-        return fh.read(size, offset)
-        #name = os.path.basename(path)  #Get the real file name from the path
-        #fh = self.userfiles[name]
-        #for line in self.RNG(size):
-        #    fh.write(line,offset)
+        print size
+        name = os.path.basename(path)  #Get the real file name from the path
+        fh = io.open(self.userfiles[name], 'a')
+        rngsize = int(os.path.getsize(self.userfiles[name]))
+        print rngsize
+        rng = np.loadtxt(self.RNG(rngsize))
+        for line in rng:
+            fh.write(line.astype('U') + u' ')
+        fh.close()
 
+    #When given a number in the buffer generate the average number of time 
+    #stamps per minute and write to the file
     def write(self, path, buf, offset, fh=None):
         print "writing"
         name = os.path.basename(path)  #Get the real file name from the path 
-        fh = self.userfiles[name]
+        fh = io.open(self.userfiles[name], 'a')
         print path
-        for line in self.GetStamps(buf):
-            fh.write(line,offset)
+        stamptime = np.loadtxt(self.GetStamps(buf))
+        print stamptime[-1]
+        print stamptime[0]
+        stamptime = np.diff(stamptime)
+        stamptime = (np.float64(buf)/np.sum(stamptime))*np.float64(60)/np.float64(2)
+        print stamptime
+        fh.write(u"\nThe average giegercounter time stamps per minute is ")
+        fh.write(stamptime.astype('U') + u'\n')
+        fh.close()
         return len(buf)
 
+    #Generate a number of psudorandom numbers from the true random 
+    #numbers created from the timestamps
     def RNG(self,original_numbers):
         reseed = 10
         
@@ -144,7 +166,8 @@ class VoltronFS(fuse.Fuse):
                 return randnum
             numbers -= 1
         return randnum
-
+    # Get the number time stamps the caller needs from the timestamps file
+    # and return them. 
     def GetStamps(self,stamps):
         print "getting stamps"
         fi = io.open(self.timestampfiles["timestamps"],'r')
@@ -169,65 +192,21 @@ class VoltronFS(fuse.Fuse):
 
         return lines[0:int(stamps)]
 
-    # Cleans file for future use. Removes extra spaces and lines with multiple time stamps
+    # Cleans file for future use. Removes extra spaces and lines with multiple time stamps or incorrect data
     def CleanFile(self):
+        validdata = re.compile('^[1]{1}\d{9}\.+\d*')
         print "cleaning time stamps file"
         fi = io.open(self.timestampfiles["timestamps"],'r')
         lines = fi.readlines()
         fi.close()
         fi = io.open(self.timestampfiles["timestamps"],'w')
         for line in lines:
-            try:
-                float(line)
+            if validdata.match(line):
                 fi.write(line)
                 fi.flush()
-            except:
-                pass
         fi.close()
         print "clean"
 
-    # Important Bits
-    class VoltronFile(object):
-
-        def __init__(self, path, flags, *mode):
-            self.file = tempfile.NamedTemporaryFile('w+b', 0, '','tmp', None, False)
-            self.fd = self.file.fileno()
-            self.data = io.StringIO(u'',u'\n')
-
-        def release(self, flags):
-            print "releasing"
-
-        def fsync(self, isfsyncfile):
-            print "fsyncing"
-            return 0
-
-        def fgetattr(self):
-            print "fgetattribute"
-            return os.fstat(self.fd)
-
-        def write(self, buf, offset):
-            print "writeinfile"
-            self.data.seek(0,2)
-            self.data.write(buf)
-            return len(buf)
-        
-        def read(self, size, offset):
-            print "reading from file"
-            self.data.seek(0)
-            self.data.seek(offset)
-            return self.data.read(offset+size)
-
-        def ftruncate(self, len):
-            print "ftruncating"
-            return 0
-		
-    def main(self, *a, **kw):
-
-        self.file_class = self.VoltronFile
-
-        return Fuse.main(self, *a, **kw)
-        
-    
 if __name__ == '__main__':
     server = VoltronFS()
     usage="""
