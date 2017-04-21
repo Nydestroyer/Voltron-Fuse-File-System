@@ -10,80 +10,84 @@ import os
 import io
 from fuse import Fuse
 import tempfile
+import re
+import string
 fuse.fuse_python_api = (0, 2)
-
-def flag2mode(flags):
-    md = {os.O_RDONLY: 'r', os.O_WRONLY: 'w', os.O_RDWR: 'w+'}
-    m = md[flags & (os.O_RDONLY | os.O_WRONLY | os.O_RDWR)]
-
-    if flags | os.O_APPEND:
-        m = m.replace('w', 'a', 1)
-
-    return m
 
 class VoltronFS(fuse.Fuse):
     def __init__(self, *args, **kw):
         fuse.Fuse.__init__(self, *args, **kw)
-        self.root = '/home/dveling/'
+        self.root = sys.argv[-2]
         self.userfiles = {}
         self.timestampfiles = {"intermediate":
-                            os.path.join("../intermediate.txt")
-                               ,"timestamps":
-                               os.path.join("../ts2.txt")}
+                               os.path.join(self.root ,"intermediate.txt")
+                               ,"timestamps":os.path.join(self.root,"ts2.txt")}
+        self.validfilename = re.compile('^[\w,\s-]+\.[A-Za-z]{3}$')
         print self.timestampfiles
         print self.userfiles
+        #self.CleanFile()
 		
     # Nonimportant but still somehow important bits
   
     def getattr(self, path):
+        name = os.path.basename(path)  #Get the real file name from the path
+        print "getattr"
+        print path
+        print self.userfiles
         st = fuse.Stat()
         st.st_mode = stat.S_IFDIR | 0777
         st.st_nlink = 2
         st.st_atime = int(time.time())
         st.st_mtime = st.st_atime
         st.st_ctime = st.st_atime
-
-        if path == '/':
-            pass
-        else:
-            return - errno.ENOENT
+        if self.validfilename.match(name):
+            if name in self.userfiles:
+                st = os.stat(self.userfiles[name])
+                pass
+            else:
+                return - errno.ENOENT
         return st
         
     def readlink(self, path):
+        print "readlink"
         return 0
 
     def unlink(self, path):
+        print "unlink"
         return 0
         
     def link(self, path, path1):
+        print "link"
         return 0
 
     def truncate(self, path, len):
+        print "trunc"
         f = open("." + path, "a")
         f.truncate(len)
         f.close()
 
     def utime(self, path, times):
-        return 1
+        print "utime"
 		
     def access(self, path, mode):
-        if not os.access("." + path, mode):
-            return -EACCES
+        print "access"
+        return 
     
     def close(self, path):
+        print "close"
+
+    def open(self, path, flags):
+        print "opening"
         name = os.path.basename(path)  #Get the real file name from the path
         if name in self.userfiles:
-            self.userfiles[name] = None
-        return 0
-
-    def open(self, path, flags, mode):
-        print "opening"
-        return 
+            return None
+        else:
+            return -errno.ENOENT
     
     def create(self, path, mode, fi=None):
         name = os.path.basename(path)  #Get the real file name from the path
         print "creating"
-        self.userfiles[name] = self.VoltronFile(self,path,0,mode) #Create a fake file stream to store the data
+        self.userfiles[name] = os.path.join(self.root, name)
         print self.userfiles
         return self.userfiles[name]
 
@@ -97,134 +101,102 @@ class VoltronFS(fuse.Fuse):
     def fsinit(self):
         os.chdir(self.root)
 
-    def read(self, path, size, offset, fh):
-        return fh.read(size, offset)
+    def read(self, path, size, offset, fh=None):
+        print "reading"
+        print size
+        name = os.path.basename(path)  #Get the real file name from the path
+        fh = io.open(self.userfiles[name], 'a')
+        rng = np.loadtxt(self.RNG(size))
+        for line in rng:
+            fh.write(line.astype('U') + u' ')
+        fh.close()
 
-    def write(self, path, buf, offset, fh):
-        return fh.write(buf, offset)
-    
-    # Important Bits
-    class VoltronFile(object):
+    def write(self, path, buf, offset, fh=None):
+        print "writing"
+        name = os.path.basename(path)  #Get the real file name from the path 
+        fh = io.open(self.userfiles[name], 'a')
+        print path
+        stamptime = np.loadtxt(self.GetStamps(buf))
+        print stamptime[-1]
+        print stamptime[0]
+        stamptime = np.diff(stamptime)
+        stamptime = (np.float64(buf)/np.sum(stamptime))*np.float64(60)/np.float64(2)
+        print stamptime
+        fh.write(u"The average giegercounter time stamps per minute is ")
+        fh.write(stamptime.astype('U'))
+        fh.close()
+        return len(buf)
 
-        def __init__(self, path, flags, *mode):
-            self.file = tempfile.TemporaryFile('w+b', -1, '','tmp', None)
-            self.fd = self.file.fileno()
-
-        def read(self, length, offset):
-            print "reading"
-            self.file.seek(offset)
-            for line in self.RNG(length):
-                self.file.write(line)
-            return self.file.read(length)
-
-        def write(self, buf, offset):
-            print "writing"
-            self.file.seek(offset)
-            for line in self.GetStamps(buf):
-                self.file.write(line)
-            return len(buf)
-
-        def release(self, flags):
-            self.file.close()
-
-        def fsync(self, isfsyncfile):
-            print "fsyncing"
-            return 0
-
-        def flush(self):
-            print "flushing"
-            return 0
-
-        def fgetattr(self):
-            print "yep"
-            st = fuse.Stat()
-            st.st_mode = stat.S_IFDIR | 0777
-            st.st_nlink = 1
-            st.st_atime = int(time.time())
-            st.st_mtime = st.st_atime
-            st.st_ctime = st.st_atime
-            
-            return st
-
-        def ftruncate(self, len):
-            print "ftruncating"
-            return 0
-		
-        def RNG(original_numbers):
-            reseed = 10
-            
-            stamps = GetTimestamps(8 * (original_numbers/reseed))
-            numbers = original_numbers
+    def RNG(self,original_numbers):
+        reseed = 10
         
-            fi = os.open(self.timestampfiles["intermediate"], "w")
-            
-            for line in stamps:
+        stamps = self.GetStamps(8 * (original_numbers/reseed))
+        numbers = original_numbers
+        
+        fi = io.open(self.timestampfiles["intermediate"],'w+b')
+        
+        for line in stamps:
+            fi.write(line)
+            fi.flush()
+        fi.close()
+        stamps = np.loadtxt(self.timestampfiles["intermediate"])
+        
+        ti = np.diff(stamps)
+        til = ti[1:] > ti[:-1]
+        til = np.array(til)
+        seed = np.packbits(til- 1)
+        randnum = []
+        
+        while(numbers > 0):
+            if numbers % reseed == 0:
+                random.seed(int(seed[(numbers/reseed)-1]))
+            randnum.append(random.getrandbits(8))
+            if numbers == 0:
+                return randnum
+            numbers -= 1
+        return randnum
+
+    def GetStamps(self,stamps):
+        print "getting stamps"
+        fi = io.open(self.timestampfiles["timestamps"],'r')
+        print "got stamps"
+        lines = fi.readlines()
+        print lines[1:20]
+        fi.close()
+        print "saving stamps"
+        fi = io.open(self.timestampfiles["timestamps"],'w')
+        print "saved stamps"
+        count = int(stamps)
+        print stamps
+        print count
+        print lines[1:20]
+        for line in lines:
+            if count == 0:
                 fi.write(line)
                 fi.flush()
-                fi.close()
-                
-            stamps = np.loadtxt(self.timestampfiles["intermediate"])
-            
-            ti = np.diff(stamps)
-            til = ti[1:] > ti[:-1]
-            til = np.array(til)
-            seed = np.packbits(til- 1)
-            randnum = []
-            
-            while(numbers > 0):
-                if numbers % reseed == 0:
-                    random.seed(int(seed[(numbers/reseed)-1]))
-                randnum.append(random.getrandbits(8))
-                if numbers == 0:
-                    return randnum
-                numbers -= 1
-            return randnum
+            if count > 0 and count <= stamps:
+                count -= 1
+        fi.close()
 
-        def GetStamps(stamps):
-            CleanFile()
-            fi = os.open(self.timestampfiles["timestamps"], "r")
-            
-            lines = fi.readlines()
-            
-            fi.close()
-            
-            fi = os.open(self.timestampfiles["timestamps"], "w")
-            
-            count = stamps
-            
-            for line in lines:
-                if count == 0:
-                    fi.write(line)
-                    fi.flush()
-                if count > 0 and count <= starting_count:
-                    count -= 1
-                    fi.close()
-                    
-            return lines[0:stamps]
-                
-        # Cleans file for future use. Removes extra spaces and lines with multiple time stamps
-        def CleanFile():
-            fi = open(self.timestampfiles["timestamps"],"r")
-            lines = fi.readlines()
-            fi.close()
-            fi = open(self.timestampfiles["timestamps"],"w")
-            for line in lines:
-                try: 
-                    float(line)
-                    fi.write(line)
-                    fi.flush()
-                except:
-                    pass
-                
-            fi.close()
+        return lines[0:int(stamps)]
 
-    def main(self, *a, **kw):
+    # Cleans file for future use. Removes extra spaces and lines with multiple time stamps
+    def CleanFile(self):
+        print "cleaning time stamps file"
+        fi = io.open(self.timestampfiles["timestamps"],'r')
+        lines = fi.readlines()
+        fi.close()
+        fi = io.open(self.timestampfiles["timestamps"],'w')
+        for line in lines:
+            try:
+                float(line)
+                fi.write(line)
+                fi.flush()
+            except:
+                pass
+        fi.close()
+        print "clean"
 
-        self.file_class = self.VoltronFile
-
-        return Fuse.main(self, *a, **kw)
-        
-    
 if __name__ == '__main__':
     server = VoltronFS()
     usage="""
